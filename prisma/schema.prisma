@@ -1,0 +1,365 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountType {
+  DEMO
+  REAL
+}
+
+enum BrokerType {
+  MT5
+}
+
+enum AgentType {
+  ANALYST
+  RISK_MANAGER
+  NEWS
+  EXECUTION
+}
+
+enum SignalSide {
+  BUY
+  SELL
+  WAIT
+}
+
+enum SignalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXECUTED
+  FAILED
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  NEW
+  SENT
+  FILLED
+  PARTIALLY_FILLED
+  REJECTED
+  CANCELED
+  CLOSED
+  FAILED
+}
+
+enum TradeStatus {
+  OPEN
+  CLOSED
+  BREAKEVEN
+  STOPPED_OUT
+  TAKE_PROFIT
+}
+
+enum NewsImpact {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model User {
+  id           String            @id @default(cuid())
+  email        String            @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  accounts     TradingAccount[]
+  strategies   Strategy[]
+  settings     Setting[]
+  logs         SystemLog[]
+}
+
+model TradingAccount {
+  id               String            @id @default(cuid())
+  userId           String
+  name             String
+  accountType      AccountType
+  brokerType       BrokerType        @default(MT5)
+  mt5Login         String?
+  mt5Server        String?
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brokerConnection  BrokerConnection?
+  trades           Trade[]
+  orders           Order[]
+  positions        Position[]
+  botRuns          BotRun[]
+
+  @@index([userId])
+}
+
+model BrokerConnection {
+  id               String           @id @default(cuid())
+  tradingAccountId  String           @unique
+  bridgeUrl        String?
+  bridgeToken      String?
+  lastSyncAt       DateTime?
+  isConnected      Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  tradingAccount   TradingAccount   @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+}
+
+model Symbol {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  name        String
+  market      String
+  pipSize     Float?
+  pipValue    Float?
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  signals     Signal[]
+  trades      Trade[]
+  snapshots   MarketSnapshot[]
+  newsEvents  NewsEvent[]
+}
+
+model Strategy {
+  id            String    @id @default(cuid())
+  userId        String
+  name          String
+  description   String?
+  timeframe     String
+  isActive      Boolean   @default(true)
+  parameters    Json
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signals       Signal[]
+  botRuns       BotRun[]
+
+  @@index([userId])
+}
+
+model Agent {
+  id          String     @id @default(cuid())
+  name        String
+  type        AgentType
+  isActive    Boolean    @default(true)
+  config      Json?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  signals     Signal[]
+  botRuns     BotRun[]
+  logs        SystemLog[]
+}
+
+model Signal {
+  id            String        @id @default(cuid())
+  strategyId    String?
+  symbolId      String
+  agentId       String
+  side          SignalSide
+  status        SignalStatus  @default(PENDING)
+  timeframe     String
+  entryPrice    Float?
+  stopLoss      Float?
+  takeProfit    Float?
+  confidence    Float?
+  reason        String?
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  strategy      Strategy?     @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  symbol        Symbol        @relation(fields: [symbolId], references: [id], onDelete: Restrict)
+  agent         Agent         @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  trade         Trade?
+
+  @@index([symbolId])
+  @@index([strategyId])
+  @@index([agentId])
+}
+
+model Trade {
+  id                String       @id @default(cuid())
+  tradingAccountId   String
+  symbolId           String
+  signalId           String?      @unique
+  side               OrderSide
+  status             TradeStatus  @default(OPEN)
+  entryPrice         Float
+  exitPrice          Float?
+  stopLoss           Float?
+  takeProfit         Float?
+  lotSize            Float
+  riskAmount         Float?
+  profitLoss         Float?
+  openedAt           DateTime     @default(now())
+  closedAt           DateTime?
+  metadata           Json?
+
+  tradingAccount     TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+  symbol             Symbol         @relation(fields: [symbolId], references: [id], onDelete: Restrict)
+  signal             Signal?        @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  orders             Order[]
+  position           Position?
+
+  @@index([tradingAccountId])
+  @@index([symbolId])
+}
+
+model Order {
+  id                String       @id @default(cuid())
+  tradingAccountId   String
+  tradeId            String?
+  side              OrderSide
+  status            OrderStatus  @default(NEW)
+  mt5OrderId        String?
+  price             Float?
+  volume            Float
+  sl                Float?
+  tp                Float?
+  comment           String?
+  sentAt            DateTime?
+  filledAt          DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  tradingAccount    TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+  trade             Trade?         @relation(fields: [tradeId], references: [id], onDelete: SetNull)
+
+  @@index([tradingAccountId])
+  @@index([tradeId])
+}
+
+model Position {
+  id                String       @id @default(cuid())
+  tradingAccountId   String
+  tradeId            String?      @unique
+  symbolId           String
+  mt5PositionId      String?
+  side              OrderSide
+  volume            Float
+  openPrice         Float
+  currentPrice      Float?
+  unrealizedPnl     Float?
+  openedAt          DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  tradingAccount    TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+  trade             Trade?         @relation(fields: [tradeId], references: [id], onDelete: SetNull)
+  symbol            Symbol         @relation(fields: [symbolId], references: [id], onDelete: Restrict)
+}
+
+model RiskRule {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  maxRiskPercent  Float
+  maxDailyLoss    Float?
+  maxOpenTrades   Int?
+  maxDrawdown     Float?
+  isActive        Boolean  @default(true)
+  config          Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model NewsEvent {
+  id            String      @id @default(cuid())
+  symbolId      String?
+  title         String
+  source        String?
+  impact        NewsImpact
+  eventTime     DateTime
+  sentiment     Float?
+  summary       String?
+  rawPayload    Json?
+  createdAt     DateTime    @default(now())
+
+  symbol        Symbol?     @relation(fields: [symbolId], references: [id], onDelete: SetNull)
+
+  @@index([eventTime])
+  @@index([impact])
+}
+
+model MarketSnapshot {
+  id          String   @id @default(cuid())
+  symbolId    String
+  timeframe   String
+  open        Float
+  high        Float
+  low         Float
+  close       Float
+  volume      Float?
+  indicators  Json?
+  capturedAt  DateTime @default(now())
+
+  symbol      Symbol   @relation(fields: [symbolId], references: [id], onDelete: Restrict)
+
+  @@index([symbolId, timeframe, capturedAt])
+}
+
+model BotRun {
+  id            String   @id @default(cuid())
+  accountId     String?
+  strategyId    String?
+  agentId       String?
+  status        String
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  tradingAccount TradingAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  strategy       Strategy?       @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  agent          Agent?          @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([accountId])
+  @@index([strategyId])
+}
+
+model SystemLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  agentId     String?
+  level       String
+  message     String
+  context     Json?
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  agent       Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([level])
+}
+
+model Setting {
+  id          String   @id @default(cuid())
+  userId      String
+  key         String
+  value       Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+}
